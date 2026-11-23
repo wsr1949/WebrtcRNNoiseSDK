@@ -334,7 +334,7 @@ static inline double WRNUpdateEma(double ema, double sample, double alpha) {
             if (ageNs < 200000000LL) pairSkewMs = self->_glassesLastPairSkewMs;
         }
         line = [NSString stringWithFormat:
-                @"noTS=1 jb=%dms rendQ=%dms pairSkew=%dms hit=%d miss=%d ref=%.0fdB dly=%dms ncc=%.2f out=%d",
+                @"无时间戳=1 采集缓冲=%dms 播放队列=%dms 配对偏差=%dms 命中=%d 缺失=%d 参考=%.0fdB 延迟=%dms 相关=%.2f 输出=%d",
                 jbMs, rendQMs, pairSkewMs, self->_glassesRenderPairHits, self->_glassesRenderPairMiss, refDb,
                 self->_glassesDelayLocked ? self->_glassesDelaySamples * 1000 / kWRNSampleRate : -1,
                 self->_glassesDelayNcc, self->_glassesOutFrames];
