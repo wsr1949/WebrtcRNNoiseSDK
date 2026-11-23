@@ -1,0 +1,5 @@
+framework module WebrtcRNNoise {
+    umbrella header "WebrtcRNNoise.h"
+    export *
+    module * { export * }
+}

@@ -1,0 +1,15 @@
+# Xcode
+DerivedData/
+build/
+*.xcuserdata
+*.xcuserstate
+.DS_Store
+Pods/
+
+# Large third-party checkouts and generated WebRTC binaries.
+ThirdParty/depot_tools/
+ThirdParty/webrtc-ios/
+Vendor/WebRTC/
+
+# Exceeds GitHub 100MB blob limit; regenerate with ./scripts/build_webrtc_apm_ios.sh
+Vendor/WebRTCAPM/WebRTCAPM.xcframework/ios-arm64_x86_64-simulator/libwebrtc_apm.a

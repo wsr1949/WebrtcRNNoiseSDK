@@ -1,0 +1,22 @@
+import("//build/config/ios/ios_sdk.gni")
+
+static_library("webrtc_apm_wrapper") {
+  complete_static_lib = true
+  configs -= [
+    "//build/config/clang:find_bad_constructs",
+    "//build/config/clang:unsafe_buffers",
+  ]
+
+  public = [ "include/WebRTCAPM.h" ]
+
+  sources = [ "src/WebRTCAPM.cc" ]
+
+  include_dirs = [ "include" ]
+
+  deps = [
+    "//api/audio:builtin_audio_processing_builder",
+    "//api/environment:environment_factory",
+    "//modules/audio_processing",
+    "//modules/audio_processing/vad",
+  ]
+}
