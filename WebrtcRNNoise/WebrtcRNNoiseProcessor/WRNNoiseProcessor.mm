@@ -40,7 +40,7 @@ static const NSInteger kWRNDefaultGlassesPipelineDelayMs = 350;
 /// 还没测到延迟时给 AEC3 的初始值。测到之后改成实测延迟，不再用这个数。
 static const NSInteger kWRNGlassesAECBaselineDelayMs = 55;
 static const int kWRNGlassesDelayHistSamples = 19200;
-static const int kWRNGlassesDelaySearchSamples = 3200;
+static const int kWRNGlassesDelaySearchSamples = 640;
 static const int kWRNGlassesDelayMinSamples = 1600;
 static const int kWRNGlassesDelayMaxSamples = 14400;
 /// render 队列与 JitterBuffer 出队时刻的近似配对偏移（毫秒），不用蓝牙包到达时刻。
@@ -249,6 +249,7 @@ static inline double WRNUpdateEma(double ema, double sample, double alpha) {
     float _glassesDelayNcc;
     int _glassesDelayPendingSamples;
     int _glassesDelayPendingCount;
+    int _glassesDelayWeakCount;
     NSInteger _glassesAppliedDelayMs;
 }
 
@@ -668,6 +669,7 @@ static inline double WRNUpdateEma(double ema, double sample, double alpha) {
     _glassesDelayNcc = 0;
     _glassesDelayPendingSamples = 0;
     _glassesDelayPendingCount = 0;
+    _glassesDelayWeakCount = 0;
     _glassesAppliedDelayMs = -1;
     if (_glassesRenderHist) {
         memset(_glassesRenderHist, 0, (size_t)kWRNGlassesDelayHistSamples * sizeof(int16_t));
@@ -725,16 +727,20 @@ static inline double WRNUpdateEma(double ema, double sample, double alpha) {
     return energy > 10000.0 * 800.0;
 }
 
-- (void)updateGlassesDelayOnStateQueue {
-    if (_glassesCaptureSearchCount < kWRNGlassesDelaySearchSamples) return;
-    // 播放停了历史里还留着上一段 TTS，继续搜索会把延迟拉到 700ms 以上。
-    if (![self glassesRecentRenderActive]) return;
-    int maxLag = _glassesRenderHistCount - kWRNGlassesDelaySearchSamples;
-    if (maxLag > kWRNGlassesDelayMaxSamples) maxLag = kWRNGlassesDelayMaxSamples;
-    if (maxLag < kWRNGlassesDelayMinSamples) return;
+- (BOOL)glassesDelayMaxLag:(int *)maxLag {
+    if (_glassesCaptureSearchCount < kWRNGlassesDelaySearchSamples) return NO;
+    if (![self glassesRecentRenderActive]) return NO;
+    int max = _glassesRenderHistCount - kWRNGlassesDelaySearchSamples;
+    if (max > kWRNGlassesDelayMaxSamples) max = kWRNGlassesDelayMaxSamples;
+    if (max < kWRNGlassesDelayMinSamples) return NO;
+    *maxLag = max;
+    return YES;
+}
+
+- (void)glassesDelayGlobalPeakMaxLag:(int)maxLag lag:(int *)lagOut score:(float *)scoreOut {
     float best = -1.f;
     int bestLag = 0;
-    for (int lag = kWRNGlassesDelayMinSamples; lag <= maxLag; lag += 80) {
+    for (int lag = kWRNGlassesDelayMinSamples; lag <= maxLag; lag += 16) {
         float ncc = [self glassesDelayNccAtLag:lag];
         if (ncc > best) {
             best = ncc;
@@ -742,11 +748,11 @@ static inline double WRNUpdateEma(double ema, double sample, double alpha) {
         }
     }
     if (best >= 0.f) {
-        int refineStart = bestLag - 80;
-        int refineEnd = bestLag + 80;
-        if (refineStart < kWRNGlassesDelayMinSamples) refineStart = kWRNGlassesDelayMinSamples;
-        if (refineEnd > maxLag) refineEnd = maxLag;
-        for (int lag = refineStart; lag <= refineEnd; lag += 16) {
+        int start = bestLag - 8;
+        int end = bestLag + 8;
+        if (start < kWRNGlassesDelayMinSamples) start = kWRNGlassesDelayMinSamples;
+        if (end > maxLag) end = maxLag;
+        for (int lag = start; lag <= end; lag++) {
             float ncc = [self glassesDelayNccAtLag:lag];
             if (ncc > best) {
                 best = ncc;
@@ -754,50 +760,74 @@ static inline double WRNUpdateEma(double ema, double sample, double alpha) {
             }
         }
     }
-    // 用 200ms 相关，不用 30ms 的瞬时峰。ncc 是正在使用的延迟和这段音频的吻合程度。
-    float heldScore = -1.f;
-    if (_glassesDelayLocked) {
-        heldScore = [self glassesDelayNccAtLag:_glassesDelaySamples];
-        if (heldScore >= 0.f) _glassesDelayNcc = heldScore;
-    } else if (best >= 0.f) {
-        _glassesDelayNcc = best;
-    }
-    if (!_glassesDelayLocked) {
-        if (best < 0.20f) {
-            _glassesDelayPendingCount = 0;
-            return;
-        }
-        if (_glassesDelayPendingCount > 0 && abs(bestLag - _glassesDelayPendingSamples) <= 480) {
-            _glassesDelayPendingCount += 1;
-        } else {
-            _glassesDelayPendingSamples = bestLag;
-            _glassesDelayPendingCount = 1;
-        }
-        if (_glassesDelayPendingCount < 2) return;
-        _glassesDelayLocked = 1;
-        _glassesDelaySamples = bestLag;
-        _glassesDelayNcc = best;
+    *lagOut = bestLag;
+    *scoreOut = best;
+}
+
+- (void)glassesDelayConsiderPeakLag:(int)bestLag score:(float)best {
+    if (best < 0.35f) {
         _glassesDelayPendingCount = 0;
         return;
     }
-    int distance = bestLag - _glassesDelaySamples;
-    if (distance < 0) distance = -distance;
-    // 当前延迟还吻合就不改。另一个延迟在这 200ms 上明显更好，就马上换过去。
-    BOOL better = best >= 0.20f && (heldScore < 0.f || best > heldScore + 0.06f) && distance > 160;
-    if (!better) {
-        _glassesDelayPendingCount = 0;
-        return;
-    }
-    if (_glassesDelayPendingCount > 0 && abs(bestLag - _glassesDelayPendingSamples) <= 480) {
+    if (_glassesDelayPendingCount > 0 && abs(bestLag - _glassesDelayPendingSamples) <= 32) {
         _glassesDelayPendingCount += 1;
     } else {
         _glassesDelayPendingSamples = bestLag;
         _glassesDelayPendingCount = 1;
     }
-    if (_glassesDelayPendingCount < 2 && !(heldScore < 0.12f || best > heldScore + 0.12f)) return;
+    if (_glassesDelayPendingCount < 2) {
+        if (!_glassesDelayLocked) _glassesDelayNcc = best;
+        return;
+    }
     _glassesDelaySamples = bestLag;
+    _glassesDelayLocked = 1;
     _glassesDelayNcc = best;
     _glassesDelayPendingCount = 0;
+    _glassesDelayWeakCount = 0;
+}
+
+- (void)updateGlassesDelayOnStateQueue {
+    int maxLag = 0;
+    if (![self glassesDelayMaxLag:&maxLag]) return;
+    if (!_glassesDelayLocked) {
+        int bestLag = 0;
+        float best = -1.f;
+        [self glassesDelayGlobalPeakMaxLag:maxLag lag:&bestLag score:&best];
+        [self glassesDelayConsiderPeakLag:bestLag score:best];
+        return;
+    }
+    // 40ms 窗上，只看当前延迟附近。峰还在就向它走 1ms，假峰够不着。
+    static const int offsets[] = {0, 16, -16, 32, -32, 64, -64, 128, -128, 256, -256};
+    float heldScore = -1.f;
+    float best = -1.f;
+    int bestLag = _glassesDelaySamples;
+    for (int i = 0; i < (int)(sizeof(offsets) / sizeof(offsets[0])); i++) {
+        int lag = _glassesDelaySamples + offsets[i];
+        if (lag < kWRNGlassesDelayMinSamples || lag > maxLag) continue;
+        float ncc = [self glassesDelayNccAtLag:lag];
+        if (offsets[i] == 0) heldScore = ncc;
+        if (ncc > best) {
+            best = ncc;
+            bestLag = lag;
+        }
+    }
+    if (heldScore >= 0.f) _glassesDelayNcc = heldScore;
+    if (best >= 0.25f) {
+        _glassesDelayWeakCount = 0;
+        _glassesDelayPendingCount = 0;
+        int step = bestLag - _glassesDelaySamples;
+        if (step > 16) step = 16;
+        if (step < -16) step = -16;
+        _glassesDelaySamples += step;
+        return;
+    }
+    _glassesDelayWeakCount += 1;
+    // 附近的峰连续约 200ms 都低于 0.25，才重新全局搜索。
+    if (_glassesDelayWeakCount < 10) return;
+    int peakLag = 0;
+    float peak = -1.f;
+    [self glassesDelayGlobalPeakMaxLag:maxLag lag:&peakLag score:&peak];
+    [self glassesDelayConsiderPeakLag:peakLag score:peak];
 }
 
 - (void)applyGlassesDelayToAEC3OnStateQueue {
