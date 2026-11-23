@@ -860,6 +860,33 @@ static inline double WRNUpdateEma(double ema, double sample, double alpha) {
     [self applyGlassesDelayToAEC3OnStateQueue];
 }
 
+/// 麦克风断流时播放仍在入队。已经播过、还没送进 AEC3 的帧按顺序记进回声历史，
+/// 只留下不晚于 targetPlayNs 的最后一帧，交给随后的正常出队。
+- (void)dropStaleUnsentReferenceBeforePlayTime:(uint64_t)targetPlayNs {
+    if (targetPlayNs == 0) return;
+    while (YES) {
+        uint64_t frontNs = 0;
+        uint64_t nextNs = 0;
+        if (![_renderTimeQueue peekFramePlayHostTimeNs:&frontNs atFrameOffset:0]) return;
+        if (![_renderTimeQueue peekFramePlayHostTimeNs:&nextNs atFrameOffset:1]) return;
+        if (frontNs == 0 || nextNs == 0 || nextNs > targetPlayNs) return;
+        int16_t skipped[kWRNFrameSamples];
+        uint64_t skippedNs = 0;
+        if (![_renderTimeQueue popFrontFrame160:skipped playHostTimeNs:&skippedNs]) return;
+        [self appendGlassesRenderHistory:skipped];
+    }
+}
+
+- (void)catchUpUnsentEchoReferenceAfterCaptureGap {
+    [self performOnStateQueue:^{
+        if (!self->_glassesEchoEnabled) return;
+        uint64_t nowNs = WRNMachTicksToNanoseconds(mach_absolute_time());
+        uint64_t alignNs = (uint64_t)kWRNGlassesRenderPairingOffsetMs * 1000000ULL;
+        if (nowNs <= alignNs) return;
+        [self dropStaleUnsentReferenceBeforePlayTime:nowNs - alignNs];
+    }];
+}
+
 - (BOOL)pumpOneGlassesFrameOnStateQueue {
     int16_t capture[kWRNFrameSamples];
     uint64_t captureOutNs = 0;

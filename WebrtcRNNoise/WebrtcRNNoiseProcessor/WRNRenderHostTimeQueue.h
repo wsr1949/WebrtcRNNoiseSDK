@@ -12,8 +12,11 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (void)pushFrame160:(const int16_t *)frame playHostTimeNs:(uint64_t)playHostTimeNs;
 
-/// 按播出顺序弹出一帧。未送进 AEC3 的参考不会被跳过。
+/// 按播出顺序弹出一帧。
 - (BOOL)popFrontFrame160:(int16_t *)outFrame playHostTimeNs:(uint64_t *)playHostTimeNs;
+
+/// 查看队头起第 offset 帧的播放时刻，不取出。
+- (BOOL)peekFramePlayHostTimeNs:(uint64_t *)playHostTimeNs atFrameOffset:(int)offset;
 
 @end
 

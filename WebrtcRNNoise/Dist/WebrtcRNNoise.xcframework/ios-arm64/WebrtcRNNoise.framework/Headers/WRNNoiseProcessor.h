@@ -53,6 +53,10 @@ NS_ASSUME_NONNULL_BEGIN
 /// 当前回音消除计数摘要（供宿主 `LWLog` 或对照 `[WRN_AEC]` 周期行）。
 - (NSString *)echoCancellationDiagnostics;
 
+/// 拍照传图把麦克风打断之后调用一次。正常播报不要调用。
+/// 只移动还没送进 AEC3 的参考，对齐到当前正在播的声音。
+- (void)catchUpUnsentEchoReferenceAfterCaptureGap;
+
 - (NSData *)processPCMStreamData:(NSData *)pcmData;
 - (void)resetProcessor;
 

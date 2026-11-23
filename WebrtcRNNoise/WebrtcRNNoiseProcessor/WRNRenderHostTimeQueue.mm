@@ -56,6 +56,18 @@ typedef struct {
     os_unfair_lock_unlock(&_lock);
 }
 
+- (BOOL)peekFramePlayHostTimeNs:(uint64_t *)playHostTimeNs atFrameOffset:(int)offset {
+    os_unfair_lock_lock(&_lock);
+    if (offset < 0 || offset >= _count) {
+        os_unfair_lock_unlock(&_lock);
+        return NO;
+    }
+    int index = (_head + offset) % kWRNRenderQMaxFrames;
+    if (playHostTimeNs) *playHostTimeNs = _entries[index].playHostTimeNs;
+    os_unfair_lock_unlock(&_lock);
+    return YES;
+}
+
 - (BOOL)popFrontFrame160:(int16_t *)outFrame playHostTimeNs:(uint64_t *)playHostTimeNs {
     if (!outFrame) return NO;
     os_unfair_lock_lock(&_lock);
